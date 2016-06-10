@@ -19,6 +19,7 @@ NSString *const BluetoothConnectorErrorDomain = @"BluetoothConnectorErrorDomain"
 @property (assign, nonatomic) BOOL running; ///< 実行中か否か
 @property (strong, nonatomic) dispatch_queue_t queue; ///< Bluetooth処理専用のディスパッチキュー
 @property (strong, nonatomic) CBCentralManager *centralManager;	///< Bluetoothセントラルマネージャ
+@property (strong, nonatomic) NSString *peripheralUUID;   ///< ペリフェラルのUUID
 
 @end
 
@@ -36,6 +37,7 @@ NSString *const BluetoothConnectorErrorDomain = @"BluetoothConnectorErrorDomain"
 		return nil;
 	}
 	
+    _peripheralUUID = nil;
 	_services = nil;
 	_localName = nil;
 	_timeout = 5.0;
@@ -52,6 +54,7 @@ NSString *const BluetoothConnectorErrorDomain = @"BluetoothConnectorErrorDomain"
 - (void)dealloc {
 	DEBUG_LOG(@"");
 
+    _peripheralUUID = nil;
 	_services = nil;
 	_localName = nil;
 	_peripheral = nil;
@@ -119,16 +122,48 @@ NSString *const BluetoothConnectorErrorDomain = @"BluetoothConnectorErrorDomain"
 	// ペリフェラルをスキャンします。
 	self.running = YES;
 	self.peripheral = nil;
+    // スキャンスキップ処理
+    if ([self.peripheralUUID length] > 0) {
+        DEBUG_LOG(@"");
+        // 既知のペリフェラルのリスト取得
+        NSArray *identifiers = [NSArray arrayWithObjects:self.peripheralUUID,nil];
+        NSArray *peripherals = [self.centralManager retrievePeripheralsWithIdentifiers:identifiers];
+        for (CBPeripheral *peripheral in peripherals) {
+            if ([peripheral.identifier.UUIDString isEqualToString:self.peripheralUUID]) {
+                DEBUG_LOG(@"");
+                // ペリフェラルが一致した。
+                self.peripheral = peripheral;
+                break;
+            }
+        }
+    }
+    // スキャンスキップ処理2
+    if ([self.services count] > 0) {
+        DEBUG_LOG(@"");
+        //接続済みペリフェラルのリスト取得
+        NSArray *peripherals = [self.centralManager retrieveConnectedPeripheralsWithServices:self.services];
+        for (CBPeripheral *peripheral in peripherals) {
+            if ([peripheral.name isEqualToString:self.localName]) {
+                DEBUG_LOG(@"");
+                // ペリフェラルが一致した。
+                self.peripheral = peripheral;
+                break;
+            }
+        }
+    }
 	[self.centralManager stopScan];
-	NSDictionary *scanOptions = @{
-		CBCentralManagerScanOptionAllowDuplicatesKey: @NO
-	};
-	[self.centralManager scanForPeripheralsWithServices:self.services options:scanOptions];
-	NSDate *scanStartTime = [NSDate date];
-	while (!self.peripheral && [[NSDate date] timeIntervalSinceDate:scanStartTime] < self.timeout) {
-		[NSThread sleepForTimeInterval:0.05];
-	}
-	[self.centralManager stopScan];
+    if (self.peripheral == nil) {
+        DEBUG_LOG(@"");
+        NSDictionary *scanOptions = @{
+                                      CBCentralManagerScanOptionAllowDuplicatesKey: @NO
+                                      };
+        [self.centralManager scanForPeripheralsWithServices:self.services options:scanOptions];
+        NSDate *scanStartTime = [NSDate date];
+        while (!self.peripheral && [[NSDate date] timeIntervalSinceDate:scanStartTime] < self.timeout) {
+            [NSThread sleepForTimeInterval:0.05];
+        }
+        [self.centralManager stopScan];
+    }
 	BOOL discovered = (self.peripheral != nil);
 	self.running = NO;
 	
@@ -322,6 +357,7 @@ NSString *const BluetoothConnectorErrorDomain = @"BluetoothConnectorErrorDomain"
 /// ペリフェラルに接続した時に呼び出されます。
 - (void)centralManager:(CBCentralManager *)central didConnectPeripheral:(CBPeripheral *)peripheral {
 	DEBUG_LOG(@"peripheral=%@", peripheral);
+    self.peripheralUUID = peripheral.identifier.UUIDString; //再接続高速化のためにUUIDを保持する
 }
 
 /// ペリフェラルに接続失敗した時に呼び出されます。
